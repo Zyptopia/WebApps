@@ -28,6 +28,10 @@ export class RoomClient {
   private fb: any;
   private guestId: string;
 
+  // auth uid (set after anonymous sign-in). We always use selfId() for writes.
+  private uid: string | null = null;
+  private get selfId(): string { return this.uid ?? this.guestId; }
+
   public room: Room | null = null;
   public roomId: string | null = null;
 
@@ -47,7 +51,7 @@ export class RoomClient {
   private chatListeners: Array<(c: ChatMessage[])=>void> = [];
   private moderationListeners: Array<(m: ModerateResult)=>void> = [];
 
-  // --- New: ready + reactions
+  // ready + reactions
   private readyIds: Set<string> = new Set();
   private readyListeners: Array<(ready: Set<string>)=>void> = [];
 
@@ -63,9 +67,26 @@ export class RoomClient {
   private moderation = new ModerationEngine({ chatMaxLen: CHAT_MAX_LEN });
 
   constructor(opts: { firebaseConfig: Record<string, any> }) {
-  this.fb = initFirebase(opts.firebaseConfig, { anonymousAuth: true });
-  this.guestId = ensureGuestId();
+    // enable anonymous auth so rules can require auth != null
+    this.fb = initFirebase(opts.firebaseConfig, { anonymousAuth: true });
+    this.guestId = ensureGuestId();
+
+    // capture uid once auth is ready
+    this.ensureAuth().catch(()=>{});
   }
+
+  // ---------- utils: robustly await auth and cache uid ----------
+  private async ensureAuth(){
+    try {
+      const r = this.fb?.authReady;
+      if (r) {
+        if (typeof r === 'function') await r();
+        else if (typeof r?.then === 'function') await r;
+      }
+      this.uid = this.fb?.auth?.currentUser?.uid ?? this.uid ?? null;
+    } catch {}
+  }
+  private async waitAuth(){ await this.ensureAuth(); }
 
   // ---------------------------------------------------------------------------
   // Subscriptions
@@ -74,7 +95,6 @@ export class RoomClient {
   onChat(cb: (msgs: ChatMessage[])=>void){ this.chatListeners.push(cb); if(this.chat.length) cb(this.chat); return ()=>{ this.chatListeners = this.chatListeners.filter(f=>f!==cb) } }
   onModeration(cb: (m: ModerateResult)=>void){ this.moderationListeners.push(cb); return ()=>{ this.moderationListeners = this.moderationListeners.filter(f=>f!==cb) } }
 
-  // New:
   onReady(cb: (ready: Set<string>) => void){ this.readyListeners.push(cb); if(this.readyIds.size) cb(new Set(this.readyIds)); return ()=>{ this.readyListeners = this.readyListeners.filter(f=>f!==cb) } }
   onReactions(cb: (events: ReactionEvent[]) => void){ this.reactionListeners.push(cb); if(this.reactions.length) cb(this.reactions.slice()); return ()=>{ this.reactionListeners = this.reactionListeners.filter(f=>f!==cb) } }
 
@@ -84,8 +104,6 @@ export class RoomClient {
   private notifyModeration(res: ModerateResult){ this.moderationListeners.forEach(cb=>cb(res)) }
   private notifyReady(){ const snapshot = new Set(this.readyIds); this.readyListeners.forEach(cb=>cb(snapshot)); }
   private notifyReactions(){ const copy = this.reactions.slice(); this.reactionListeners.forEach(cb=>cb(copy)); }
-
-  private async waitAuth(){ try { await this.fb?.authReady?.(); } catch {} }
 
   private attachSubscriptions(){
     if(this.subscribed || !this.roomId) return;
@@ -117,16 +135,16 @@ export class RoomClient {
   // ---------------------------------------------------------------------------
   // Presence
   private async startPresence(name: string, avatar?: Avatar | null){
-    await this.fb.authReady;
     await this.waitAuth();
     if(!this.roomId) return;
+
     const now = Date.now();
     const assignedAvatar: Avatar | undefined = avatar ?? { kind:'preset', id: pickPresetId() };
-    const role: Player['role'] = (this.room?.hostId===this.guestId) ? 'host' : 'player';
-    const p: Player = { id:this.guestId, name, role, avatar: assignedAvatar, lastSeen: now };
+    const role: Player['role'] = (this.room?.hostId===this.selfId) ? 'host' : 'player';
+    const p: Player = { id:this.selfId, name, role, avatar: assignedAvatar, lastSeen: now };
 
-    const pRef = ref(this.fb.db, `rooms/${this.roomId}/players/${this.guestId}`);
-    const presRef = ref(this.fb.db, `rooms/${this.roomId}/presence/${this.guestId}`);
+    const pRef = ref(this.fb.db, `rooms/${this.roomId}/players/${this.selfId}`);
+    const presRef = ref(this.fb.db, `rooms/${this.roomId}/presence/${this.selfId}`);
 
     set(pRef, p);
     set(presRef, { lastSeen: now });
@@ -158,8 +176,7 @@ export class RoomClient {
   }
 
   async createRoom(input: CreateRoomInput){
-    await this.fb.authReady;
-await this.waitAuth();
+    await this.waitAuth();
 
     try {
       const roomRef = push(ref(this.fb.db, 'rooms'));
@@ -175,14 +192,14 @@ await this.waitAuth();
         private: !!input.private,
         maxPlayers: input.maxPlayers ?? MAX_PLAYERS_DEFAULT,
         status: 'lobby',
-        hostId: this.guestId,
+        hostId: this.selfId,
         createdAt: now,
         options: {}
       } as Room;
 
       const assignedAvatar: Avatar | undefined = input.avatar ?? { kind:'preset', id: pickPresetId() };
       const player: Player = {
-        id: this.guestId,
+        id: this.selfId,
         name: String(input.name).slice(0,MAX_NAME_LEN),
         role: 'host',
         avatar: assignedAvatar,
@@ -191,7 +208,7 @@ await this.waitAuth();
 
       await update(ref(this.fb.db), {
         [`rooms/${roomId}/meta`]: room,
-        [`rooms/${roomId}/players/${this.guestId}`]: player
+        [`rooms/${roomId}/players/${this.selfId}`]: player
       });
 
       this.roomId = roomId; this.room = room;
@@ -209,7 +226,6 @@ await this.waitAuth();
   }
 
   async joinRoomByCode(input: JoinByCodeInput){
-    await this.fb.authReady;
     await this.waitAuth();
 
     const code = String(input.code).toUpperCase();
@@ -224,14 +240,14 @@ await this.waitAuth();
     const now = Date.now();
     const assignedAvatar: Avatar | undefined = input.avatar ?? { kind:'preset', id: pickPresetId() };
     const player: Player = {
-      id: this.guestId,
+      id: this.selfId,
       name: String(input.name).slice(0,MAX_NAME_LEN),
-      role: room.hostId===this.guestId ? 'host':'player',
+      role: room.hostId===this.selfId ? 'host':'player',
       avatar: assignedAvatar,
       lastSeen: now
     };
 
-    await set(ref(this.fb.db, `rooms/${roomId}/players/${this.guestId}`), player);
+    await set(ref(this.fb.db, `rooms/${roomId}/players/${this.selfId}`), player);
 
     this.roomId = roomId; this.room = room;
     this.attachSubscriptions();
@@ -242,7 +258,7 @@ await this.waitAuth();
   // ---------------------------------------------------------------------------
   // Chat + moderation
   private isSelfMuted(): boolean {
-    const self = this.players.find(p=>p.id===this.guestId);
+    const self = this.players.find(p=>p.id===this.selfId);
     if (!self) return false;
     const until = (self as any).mutedUntil ?? 0;
     return until > Date.now();
@@ -254,16 +270,16 @@ await this.waitAuth();
 
     const modOptions = { slowModeMs: this.room?.options?.slowModeMs } as any;
     const res = await this.moderation.moderate({
-      roomId: this.roomId!, playerId: this.guestId, text, options: modOptions
+      roomId: this.roomId!, playerId: this.selfId, text, options: modOptions
     });
     if (!res.ok) { this.notifyModeration(res); return; }
 
     let clean = (res.text || '').slice(0, CHAT_MAX_LEN).trim();
     if (!clean) { this.notifyModeration({ ok:false, reason:'EMPTY' }); return; }
 
-    const name = this.players.find(p=>p.id===this.guestId)?.name ?? 'Guest';
+    const name = this.players.find(p=>p.id===this.selfId)?.name ?? 'Guest';
     const baseMsg: Omit<ChatMessage,'id'> = {
-      roomId: this.roomId!, playerId: this.guestId, name, createdAt: Date.now(), type: 'text', text: clean
+      roomId: this.roomId!, playerId: this.selfId, name, createdAt: Date.now(), type: 'text', text: clean
     };
 
     if (this.isSelfMuted()) {
@@ -286,7 +302,7 @@ await this.waitAuth();
   async setReady(flag: boolean){
     await this.waitAuth();
     if(!this.roomId) throw new Error('Not in room');
-    const path = `rooms/${this.roomId}/ready/${this.guestId}`;
+    const path = `rooms/${this.roomId}/ready/${this.selfId}`;
     if (flag) await set(ref(this.fb.db, path), true);
     else await set(ref(this.fb.db, path), null);
   }
@@ -295,7 +311,7 @@ await this.waitAuth();
   async hostStartCountdown(seconds = 3){
     await this.waitAuth();
     if(!this.roomId || !this.room) throw new Error('Not in room');
-    if (this.room.hostId !== this.guestId) throw new Error('ERR_NOT_HOST');
+    if (this.room.hostId !== this.selfId) throw new Error('ERR_NOT_HOST');
 
     // must have >= 2 players
     const present = this.players.filter(Boolean);
@@ -321,7 +337,7 @@ await this.waitAuth();
     if (now - this.lastReactionAt < 2000) return; // local throttle
     this.lastReactionAt = now;
 
-    const payload = { playerId: this.guestId, type, createdAt: now };
+    const payload = { playerId: this.selfId, type, createdAt: now };
     await set(push(ref(this.fb.db, `rooms/${this.roomId}/reactions`)), payload);
   }
 
