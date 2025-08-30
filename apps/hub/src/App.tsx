@@ -76,7 +76,7 @@ export default function App() {
   useEffect(() => client.onPlayers(setPlayers), [client]);
   useEffect(() => client.onRoomMeta(setRoom), [client]);
   useEffect(() => client.onChat(setChat), [client]);
-  useEffect(() => client.onReady(setReadyIds), [client]);
+  useEffect(() => client.onReady((s) => setReadyIds(Array.from(s))), [client]);
   useEffect(() => {
     return client.onReactions((events) => {
       const latestPerPlayer: Record<string, { type: keyof typeof REACTION_EMOJI; at: number }> = {};
@@ -130,11 +130,21 @@ export default function App() {
 
   // actions
   const createRoom = async () => {
-    const nickname = name.trim().slice(0, MAX_NAME) || 'Guest';
-    try { await client.createRoom({ slug: 'typing-race', version: '0.1.0', name: nickname, avatar }); setView('lobby'); setError(null); }
-    catch { setError('Could not create room. Please try again.'); }
-    
-  };
+  const nickname = name.trim().slice(0, MAX_NAME) || 'Guest';
+  try {
+    await client.createRoom({ slug: 'typing-race', version: '0.1.0', name: nickname, avatar });
+    setView('lobby');
+    setError(null);
+  } catch (e:any) {
+    const msg = String(e?.message || e);
+    console.error('createRoom failed:', e);
+    if (msg.includes('ERR_PERMISSION_DENIED')) setError('Permission denied by database rules. Check Anonymous Auth + rules.');
+    else if (msg.includes('ERR_ALLOCATE_CODE')) setError('Could not allocate a join code. Try again.');
+    else if (msg.includes('ERR_CODE_WRITE')) setError('Could not reserve join code — rules forbid writes to /codes.');
+    else setError('Could not create room. Please try again.');
+  }
+};
+
 
   const joinRoom = async () => {
     const nickname = name.trim().slice(0, MAX_NAME) || 'Guest';
