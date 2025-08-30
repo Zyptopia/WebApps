@@ -4,56 +4,58 @@ import {
   getDatabase, ref, onValue, push, set, update,
   onDisconnect, get, runTransaction, type Database
 } from 'firebase/database';
-import { getAuth, signInAnonymously, onAuthStateChanged, type Auth } from 'firebase/auth';
+import {
+  getAuth, signInAnonymously, onAuthStateChanged, type Auth
+} from 'firebase/auth';
 
+// Re-export what RoomClient already imports
 export { ref, onValue, push, set, update, onDisconnect, get, runTransaction };
 
-type InitOptions = { anonymousAuth?: boolean };
+type Bits = {
+  app: FirebaseApp;
+  db: Database;
+  auth?: Auth;
+  /** Resolves quickly when a user is available; falls back to a short timeout so callers never hang. */
+  authReady: () => Promise<void>;
+};
 
-let _app: FirebaseApp | null = null;
-let _db: Database | null = null;
-let _auth: Auth | null = null;
-let _authReadyPromise: Promise<void> | null = null;
+let single: Bits | null = null;
 
-function envAnonDefault(): boolean {
-  try {
-    // Vite env (set to "0" to disable)
-    // @ts-ignore
-    const v = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ANON_AUTH) ?? '1';
-    return String(v) !== '0';
-  } catch {
-    return true;
-  }
-}
+export function initFirebase(config: Record<string, any>, opts?: { anonymousAuth?: boolean }): Bits {
+  if (single) return single;
 
-export function initFirebase(config: Record<string, any>, options?: InitOptions) {
-  if (!_app) {
-    _app = initializeApp(config);
-    _db = getDatabase(_app);
+  const app = initializeApp(config);
+  const db = getDatabase(app);
 
-    const wantAnon = options?.anonymousAuth ?? envAnonDefault();
-    if (wantAnon) {
-      _auth = getAuth(_app);
-      // Resolve when we have a user (existing or after sign-in)
-      _authReadyPromise = new Promise<void>((resolve) => {
-        let resolved = false;
-        onAuthStateChanged(_auth!, (u) => {
-          if (!resolved && u) { resolved = true; resolve(); }
+  // Anonymous auth wanted by default (can be disabled via opts)
+  const wantAnon = opts?.anonymousAuth ?? true;
+
+  let auth: Auth | undefined;
+  let authReady: () => Promise<void>;
+
+  if (wantAnon) {
+    auth = getAuth(app);
+
+    authReady = () =>
+      new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+
+        // If a cached user appears or after sign-in, resolve.
+        const unsub = onAuthStateChanged(auth!, (u) => {
+          if (u) { unsub(); finish(); }
         });
-        // If no user yet, kick anonymous sign-in
-        signInAnonymously(_auth!).catch(() => {
-          // swallow; onAuthStateChanged may still fire if an older session exists
-        });
+
+        // Kick an anonymous sign-in; ignore errors (domain/rules issues will surface on write)
+        signInAnonymously(auth!).catch(() => { /* ignore here */ });
+
+        // SAFETY: never hang UI — resolve after 2.5s even if auth didn’t arrive.
+        setTimeout(finish, 2500);
       });
-    } else {
-      _authReadyPromise = Promise.resolve();
-    }
+  } else {
+    authReady = async () => { /* no-op */ };
   }
 
-  return {
-    app: _app!,
-    db: _db!,
-    auth: _auth,
-    authReady: () => _authReadyPromise ?? Promise.resolve(),
-  };
+  single = { app, db, auth, authReady };
+  return single!;
 }

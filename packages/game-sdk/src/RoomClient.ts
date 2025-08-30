@@ -22,7 +22,8 @@ export class RoomClient {
   private fb: any;
   private guestId: string;
 
-  private async waitAuth() { try { await this.fb?.authReady?.(); } catch {} }
+  private async waitAuth() { try { await (this.fb?.authReady?.()); } catch {}}
+
 
   public room: Room | null = null;
   public roomId: string | null = null;
@@ -107,7 +108,7 @@ export class RoomClient {
   }
 
   // --- Presence --------------------------------------------------------------
-  private async startPresence(name: string, avatar?: Avatar | null){
+  private async startPresence(name: string, avatar?: Avatar | null) {
   await this.waitAuth();
     if(!this.roomId) return;
     const now = Date.now();
