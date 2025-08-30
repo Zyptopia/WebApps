@@ -42,11 +42,15 @@ export default function App() {
   const client = useRoomClient();
   const selfId = client.currentSelfId?.() ?? (localStorage.getItem('guestId') || '');
 
+  // avatar picker
   const presetIds = getPresetIds();
   const [avatar, setAvatar] = useState<Avatar>({ kind: 'preset', id: presetIds[0] });
 
+  // lobby state
   const [view, setView] = useState<'home' | 'lobby'>('home');
   const [name, setName] = useState('');
+  the_code: {
+  }
   const [code, setCode] = useState('');
   const [room, setRoom] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
@@ -54,15 +58,26 @@ export default function App() {
   const [chatText, setChatText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // moderation UI
   const [warn, setWarn] = useState<string | null>(null);
   const [cooldownMs, setCooldownMs] = useState(0);
 
+  // ready + countdown
   const [readyIds, setReadyIds] = useState<string[]>([]);
   const [countdownMs, setCountdownMs] = useState(0);
+
+  // reactions (per-player, ~1.5s)
   const [activeReactions, setActiveReactions] = useState<Record<string, { type: keyof typeof REACTION_EMOJI; key: string }>>({});
 
+  // lobby message
   const [lobbyMsg, setLobbyMsg] = useState<string | null>(null);
   const showLobbyMsg = (m: string) => { setLobbyMsg(m); window.setTimeout(() => setLobbyMsg(null), 3000); };
+
+  // host settings local state (reflect room.options)
+  const isHost = room?.hostId === selfId;
+  const slowMode = room?.options?.slowModeMs ?? 0;
+  const allowLinks = !!room?.options?.allowLinks;
+  const reactionsOn = room?.options?.reactions !== false;
 
   // listeners
   useEffect(() => client.onPlayers(setPlayers), [client]);
@@ -105,12 +120,14 @@ export default function App() {
     });
   }, [client]);
 
+  // cooldown ticker
   useEffect(() => {
     if (cooldownMs <= 0) return;
     const id = setInterval(() => setCooldownMs(ms => Math.max(0, ms - 200)), 200);
     return () => clearInterval(id);
   }, [cooldownMs]);
 
+  // countdown ticker
   useEffect(() => {
     if (!room?.epochStart || room?.status !== 'starting') { setCountdownMs(0); return; }
     const tick = () => setCountdownMs(Math.max(0, room.epochStart - Date.now()));
@@ -161,12 +178,12 @@ export default function App() {
 
   const canSend = cooldownMs <= 0 && chatText.trim().length > 0;
 
+  // ready helpers
   const isReadySelf = selfId ? readyIds.includes(selfId) : false;
-  const isHost = client.currentIsHost?.() ?? (room?.hostId === selfId);
   const everyoneReady = players.length >= 2 && readyIds.length >= 2 && readyIds.length === players.length;
 
   const toggleReady = async () => {
-    try { await client.setReady(); } // transaction toggle (sticky)
+    try { await client.setReady(); } // transaction toggle
     catch { setError('Could not update Ready — check your connection.'); }
   };
 
@@ -175,18 +192,19 @@ export default function App() {
     if (players.length < 2) { showLobbyMsg('Need at least 2 players to start.'); return; }
     if (!everyoneReady) { showLobbyMsg('Everyone must be Ready before starting.'); return; }
     try {
-      await client.hostStartCountdown(3); // seconds
+      await client.hostStartCountdown(3);
     } catch (e:any) {
       const msg = String(e?.message || e);
       if (/ERR_NOT_HOST/.test(msg)) showLobbyMsg('Only the host can start the game.');
       else if (/ERR_NOT_ALL_READY/.test(msg)) showLobbyMsg('Everyone needs to be ready first.');
-      else if (/ERR_TOO_FEW_PLAYERS/.test(msg)) showLobbyMsg('At least two players are required to start.');
+      else if (/ERR_TOO_FEW_PLAYERS/.test(msg)) showLobbyMsg('At least two players are required.');
       else if (/PERMISSION|insufficient/i.test(msg)) showLobbyMsg('Start is blocked by database rules.');
       else showLobbyMsg('Could not start — check your connection.');
       console.warn('hostStartCountdown failed:', msg);
     }
   };
 
+  // share
   const shareCode = async () => {
     const joinCode = room?.joinCode || '';
     const link = `${location.origin}/join/${joinCode}`;
@@ -197,6 +215,7 @@ export default function App() {
     } catch {}
   };
 
+  // reactions
   const sendReaction = async (type: keyof typeof REACTION_EMOJI) => {
     const key = `${selfId}-${Date.now()}`;
     setActiveReactions(prev => ({ ...prev, [selfId]: { type, key } }));
@@ -209,6 +228,17 @@ export default function App() {
     try { await client.sendReaction(type as any); } catch (e) { console.warn('sendReaction failed', e); }
   };
   const onAvatarTap = () => sendReaction('wave');
+
+  // host admin actions
+  const mute5 = async (pid: string) => { try { await client.mutePlayer(pid, 5 * 60_000); showLobbyMsg('Muted for 5 min.'); } catch {} };
+  const mute15 = async (pid: string) => { try { await client.mutePlayer(pid, 15 * 60_000); showLobbyMsg('Muted for 15 min.'); } catch {} };
+  const unmute = async (pid: string) => { try { await client.unmutePlayer(pid); showLobbyMsg('Unmuted.'); } catch {} };
+  const resetAvatar = async (pid: string) => { try { await client.resetPlayerAvatar(pid); showLobbyMsg('Avatar reset.'); } catch {} };
+
+  // room options handlers
+  const setSlowMode = async (ms: number) => { try { await client.setRoomOptions({ slowModeMs: ms }); } catch {} };
+  const setAllowLinks = async (flag: boolean) => { try { await client.setRoomOptions({ allowLinks: flag }); } catch {} };
+  const setReactions = async (flag: boolean) => { try { await client.setRoomOptions({ reactions: flag }); } catch {} };
 
   const renderCountdown = () => {
     if (room?.status !== 'starting') return null;
@@ -306,6 +336,33 @@ export default function App() {
             </div>
           </div>
 
+          {/* Host settings */}
+          {isHost && (
+            <div className="card" style={{ marginTop: 12, padding: 12, background: 'rgba(0,0,0,0.03)' }}>
+              <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <strong>Room settings</strong>
+                <label className="small">Slow mode:&nbsp;
+                  <select
+                    value={slowMode}
+                    onChange={(e)=> setSlowMode(Number(e.target.value))}
+                    style={{ padding: '6px 8px', borderRadius: 8 }}
+                  >
+                    <option value={0}>Off</option>
+                    <option value={2000}>2s</option>
+                    <option value={3000}>3s</option>
+                    <option value={5000}>5s</option>
+                  </select>
+                </label>
+                <label className="small">
+                  <input type="checkbox" checked={allowLinks} onChange={(e)=>setAllowLinks(e.target.checked)} />&nbsp;Allow links
+                </label>
+                <label className="small">
+                  <input type="checkbox" checked={reactionsOn} onChange={(e)=>setReactions(e.target.checked)} />&nbsp;Enable reactions
+                </label>
+              </div>
+            </div>
+          )}
+
           <hr />
           <div className="row" style={{ alignItems: 'center', gap: 12 }}>
             <h3 style={{ margin: 0 }}>Players</h3>
@@ -329,35 +386,51 @@ export default function App() {
             {players.map((p) => {
               const isReady = readyIds.includes(p.id);
               const active = activeReactions[p.id];
+              const canAdmin = isHost && p.id !== selfId;
               return (
                 <div key={p.id} className="inline" style={{ display: 'flex', alignItems: 'center', columnGap: GAP_AFTER_AVATAR }}>
                   <button type="button" onClick={onAvatarTap} style={avatarBtnStyle} title="Tap to wave">
                     {renderAvatar(p.avatar, AVATAR_SIZE)}
                   </button>
 
+                  {/* Reaction slot (no overlap) */}
                   <div style={reactionSlotStyle}>
                     {active && <div style={reactionChipStyle} aria-hidden>{REACTION_EMOJI[active.type]}</div>}
                   </div>
 
-                  <div>
+                  {/* Name & status */}
+                  <div style={{ display:'flex', alignItems:'center', gap: 8, flexWrap:'wrap' }}>
                     <div>
                       {p.name} <span className="small">({p.role})</span>
                       {isReady && <span className="small" style={{ marginLeft: 8, color: 'var(--ok, #16a34a)' }}>• Ready</span>}
                       {p.id === selfId && <span className="small" style={{ marginLeft: 8, opacity: 0.8 }}>(you)</span>}
+                      {(p as any).mutedUntil > Date.now() && <span className="small" style={{ marginLeft: 8, color: '#a30' }}>• Muted</span>}
                     </div>
+
+                    {canAdmin && (
+                      <div className="small" style={{ display:'flex', gap: 6, flexWrap:'wrap' }}>
+                        <Button type="button" className="secondary" onClick={()=>mute5(p.id)} title="Mute for 5 minutes">Mute 5m</Button>
+                        <Button type="button" className="secondary" onClick={()=>mute15(p.id)} title="Mute for 15 minutes">Mute 15m</Button>
+                        <Button type="button" className="secondary" onClick={()=>unmute(p.id)} title="Unmute">Unmute</Button>
+                        <Button type="button" className="secondary" onClick={()=>resetAvatar(p.id)} title="Reset avatar">Reset avatar</Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="row" style={{ gap: 8, marginTop: 8 }}>
-            <Button type="button" onClick={() => sendReaction('wave')} style={iconBtn} title="Wave">👋</Button>
-            <Button type="button" onClick={() => sendReaction('clap')} style={iconBtn} title="Clap">👏</Button>
-            <Button type="button" onClick={() => sendReaction('laugh')} style={iconBtn} title="Laugh">😂</Button>
-            <Button type="button" onClick={() => sendReaction('wow')} style={iconBtn} title="Wow">😮</Button>
-            <Button type="button" onClick={() => sendReaction('nope')} style={iconBtn} title="Nope">🙅‍♂️</Button>
-          </div>
+          {/* Quick reactions bar (hidden if disabled) */}
+          {reactionsOn && (
+            <div className="row" style={{ gap: 8, marginTop: 8 }}>
+              <Button type="button" onClick={() => sendReaction('wave')} style={iconBtn} title="Wave">👋</Button>
+              <Button type="button" onClick={() => sendReaction('clap')} style={iconBtn} title="Clap">👏</Button>
+              <Button type="button" onClick={() => sendReaction('laugh')} style={iconBtn} title="Laugh">😂</Button>
+              <Button type="button" onClick={() => sendReaction('wow')} style={iconBtn} title="Wow">😮</Button>
+              <Button type="button" onClick={() => sendReaction('nope')} style={iconBtn} title="Nope">🙅‍♂️</Button>
+            </div>
+          )}
 
           <hr />
           <h3>Chat</h3>
