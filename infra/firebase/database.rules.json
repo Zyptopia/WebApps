@@ -8,21 +8,28 @@
         "meta": {
           ".read": true,
           ".write": "!data.exists()", 
-          ".validate": "newData.hasChildren(['id','slug','version','joinCode','private','maxPlayers','status','hostId','createdAt']) && newData.child('id').val() == $roomId && newData.child('joinCode').isString() && newData.child('joinCode').val().matches(/^[A-Z0-9]{4}$/) && newData.child('status').val().matches(/^(lobby|starting|inGame|ended)$/) && newData.child('maxPlayers').isNumber() && newData.child('createdAt').isNumber()"
+          ".validate": "newData.hasChildren(['id','slug','version','joinCode','private','maxPlayers','status','hostId','createdAt']) && newData.child('id').val() == $roomId && newData.child('joinCode').isString() && newData.child('joinCode').val().matches(/^[A-Z0-9]{4}$/) && newData.child('status').val().matches(/^(lobby|starting|inGame|ended)$/) && newData.child('maxPlayers').isNumber() && newData.child('createdAt').isNumber()",
+          "status": {
+            ".write": "auth != null && data.exists()",
+            ".validate": "newData.isString() && newData.val().matches(/^(lobby|starting|inGame|ended)$/)"
+          },
+          "epochStart": {
+            ".write": "auth != null && data.exists()",
+            ".validate": "newData.isNumber()"
+          }
         },
 
         "players": {
           ".read": true,
           "$playerId": {
-            ".write": "auth != null",
+            ".write": "auth != null && auth.uid == $playerId",
             ".validate": "newData.hasChildren(['id','name','role','lastSeen']) && newData.child('id').val() == $playerId && newData.child('name').isString() && newData.child('name').val().length <= 20 && newData.child('role').val().matches(/^(host|player|spectator)$/) && newData.child('lastSeen').isNumber()"
           }
         },
 
         "presence": {
-          ".read": true,
           "$playerId": {
-            ".write": "auth != null",
+            ".write": "auth != null && auth.uid == $playerId",
             ".validate": "newData.hasChildren(['lastSeen']) && newData.child('lastSeen').isNumber()"
           }
         },
@@ -37,7 +44,7 @@
 
         "ready": {
           "$playerId": {
-            ".write": "auth != null",
+            ".write": "auth != null && auth.uid == $playerId",
             ".validate": "!newData.exists() || newData.val() === true"
           }
         },

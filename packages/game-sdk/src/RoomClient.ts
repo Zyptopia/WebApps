@@ -63,8 +63,8 @@ export class RoomClient {
   private moderation = new ModerationEngine({ chatMaxLen: CHAT_MAX_LEN });
 
   constructor(opts: { firebaseConfig: Record<string, any> }) {
-    this.fb = initFirebase(opts.firebaseConfig, { anonymousAuth: true });
-    this.guestId = ensureGuestId();
+  this.fb = initFirebase(opts.firebaseConfig, { anonymousAuth: true });
+  this.guestId = ensureGuestId();
   }
 
   // ---------------------------------------------------------------------------
@@ -117,6 +117,7 @@ export class RoomClient {
   // ---------------------------------------------------------------------------
   // Presence
   private async startPresence(name: string, avatar?: Avatar | null){
+    await this.fb.authReady;
     await this.waitAuth();
     if(!this.roomId) return;
     const now = Date.now();
@@ -157,7 +158,8 @@ export class RoomClient {
   }
 
   async createRoom(input: CreateRoomInput){
-    await this.waitAuth();
+    await this.fb.authReady;
+await this.waitAuth();
 
     try {
       const roomRef = push(ref(this.fb.db, 'rooms'));
@@ -207,6 +209,7 @@ export class RoomClient {
   }
 
   async joinRoomByCode(input: JoinByCodeInput){
+    await this.fb.authReady;
     await this.waitAuth();
 
     const code = String(input.code).toUpperCase();
