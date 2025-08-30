@@ -28,10 +28,6 @@ export class RoomClient {
   private fb: any;
   private guestId: string;
 
-  // auth uid (set after anonymous sign-in). We always use selfId() for writes.
-  private uid: string | null = null;
-  private get selfId(): string { return this.uid ?? this.guestId; }
-
   public room: Room | null = null;
   public roomId: string | null = null;
 
@@ -67,26 +63,14 @@ export class RoomClient {
   private moderation = new ModerationEngine({ chatMaxLen: CHAT_MAX_LEN });
 
   constructor(opts: { firebaseConfig: Record<string, any> }) {
-    // enable anonymous auth so rules can require auth != null
     this.fb = initFirebase(opts.firebaseConfig, { anonymousAuth: true });
     this.guestId = ensureGuestId();
-
-    // capture uid once auth is ready
-    this.ensureAuth().catch(()=>{});
   }
 
-  // ---------- utils: robustly await auth and cache uid ----------
-  private async ensureAuth(){
-    try {
-      const r = this.fb?.authReady;
-      if (r) {
-        if (typeof r === 'function') await r();
-        else if (typeof r?.then === 'function') await r;
-      }
-      this.uid = this.fb?.auth?.currentUser?.uid ?? this.uid ?? null;
-    } catch {}
-  }
-  private async waitAuth(){ await this.ensureAuth(); }
+  // ---------------------------------------------------------------------------
+  // helpers (used by UI)
+  currentSelfId() { return this.guestId; }
+  currentIsHost() { return !!this.room && this.room.hostId === this.guestId; }
 
   // ---------------------------------------------------------------------------
   // Subscriptions
@@ -104,6 +88,8 @@ export class RoomClient {
   private notifyModeration(res: ModerateResult){ this.moderationListeners.forEach(cb=>cb(res)) }
   private notifyReady(){ const snapshot = new Set(this.readyIds); this.readyListeners.forEach(cb=>cb(snapshot)); }
   private notifyReactions(){ const copy = this.reactions.slice(); this.reactionListeners.forEach(cb=>cb(copy)); }
+
+  private async waitAuth(){ try { await this.fb?.authReady?.(); } catch {} }
 
   private attachSubscriptions(){
     if(this.subscribed || !this.roomId) return;
@@ -135,16 +121,16 @@ export class RoomClient {
   // ---------------------------------------------------------------------------
   // Presence
   private async startPresence(name: string, avatar?: Avatar | null){
+    await this.fb.authReady;
     await this.waitAuth();
     if(!this.roomId) return;
-
     const now = Date.now();
     const assignedAvatar: Avatar | undefined = avatar ?? { kind:'preset', id: pickPresetId() };
-    const role: Player['role'] = (this.room?.hostId===this.selfId) ? 'host' : 'player';
-    const p: Player = { id:this.selfId, name, role, avatar: assignedAvatar, lastSeen: now };
+    const role: Player['role'] = (this.room?.hostId===this.guestId) ? 'host' : 'player';
+    const p: Player = { id:this.guestId, name, role, avatar: assignedAvatar, lastSeen: now };
 
-    const pRef = ref(this.fb.db, `rooms/${this.roomId}/players/${this.selfId}`);
-    const presRef = ref(this.fb.db, `rooms/${this.roomId}/presence/${this.selfId}`);
+    const pRef = ref(this.fb.db, `rooms/${this.roomId}/players/${this.guestId}`);
+    const presRef = ref(this.fb.db, `rooms/${this.roomId}/presence/${this.guestId}`);
 
     set(pRef, p);
     set(presRef, { lastSeen: now });
@@ -176,56 +162,59 @@ export class RoomClient {
   }
 
   async createRoom(input: CreateRoomInput){
-    await this.waitAuth();
+  await this.fb.authReady;
+  await this.waitAuth();
 
-    try {
-      const roomRef = push(ref(this.fb.db, 'rooms'));
-      const roomId = roomRef.key!;
-      const joinCode = await this.allocateCode(roomId);
-      const now = Date.now();
+  try {
+    // Generate room id first (no write yet)
+    const roomRef = push(ref(this.fb.db, 'rooms'));
+    const roomId = roomRef.key!;
+    const joinCode = await this.allocateCode(roomId);
+    const now = Date.now();
 
-      const room: Room = {
-        id: roomId,
-        slug: input.slug,
-        version: input.version,
-        joinCode,
-        private: !!input.private,
-        maxPlayers: input.maxPlayers ?? MAX_PLAYERS_DEFAULT,
-        status: 'lobby',
-        hostId: this.selfId,
-        createdAt: now,
-        options: {}
-      } as Room;
+    const room: Room = {
+      id: roomId,
+      slug: input.slug,
+      version: input.version,
+      joinCode,
+      private: !!input.private,
+      maxPlayers: input.maxPlayers ?? MAX_PLAYERS_DEFAULT,
+      status: 'lobby',
+      hostId: this.guestId,
+      createdAt: now,
+      options: {}
+    } as Room;
 
-      const assignedAvatar: Avatar | undefined = input.avatar ?? { kind:'preset', id: pickPresetId() };
-      const player: Player = {
-        id: this.selfId,
-        name: String(input.name).slice(0,MAX_NAME_LEN),
-        role: 'host',
-        avatar: assignedAvatar,
-        lastSeen: now
-      };
+    const assignedAvatar: Avatar | undefined = input.avatar ?? { kind:'preset', id: pickPresetId() };
+    const player: Player = {
+      id: this.guestId,
+      name: String(input.name).slice(0,MAX_NAME_LEN),
+      role: 'host',
+      avatar: assignedAvatar,
+      lastSeen: now
+    };
 
-      await update(ref(this.fb.db), {
-        [`rooms/${roomId}/meta`]: room,
-        [`rooms/${roomId}/players/${this.selfId}`]: player
-      });
+    // 👉 write each child path explicitly (no root update)
+    await set(ref(this.fb.db, `rooms/${roomId}/meta`), room);
+    await set(ref(this.fb.db, `rooms/${roomId}/players/${this.guestId}`), player);
 
-      this.roomId = roomId; this.room = room;
-      this.attachSubscriptions();
-      this.startPresence(input.name, assignedAvatar);
-      return room;
+    this.roomId = roomId; this.room = room;
+    this.attachSubscriptions();
+    this.startPresence(input.name, assignedAvatar);
+    return room;
 
-    } catch (e:any) {
-      const code = e?.code || e?.message || '';
-      if (String(code).includes('PERMISSION_DENIED')) throw new Error('ERR_PERMISSION_DENIED');
-      if (String(code).includes('ERR_ALLOCATE_CODE')) throw new Error('ERR_ALLOCATE_CODE');
-      if (String(code).includes('ERR_CODE_WRITE')) throw new Error(String(code));
-      throw e;
-    }
+  } catch (e:any) {
+    const code = e?.code || e?.message || '';
+    if (String(code).includes('PERMISSION_DENIED')) throw new Error('ERR_PERMISSION_DENIED');
+    if (String(code).includes('ERR_ALLOCATE_CODE')) throw new Error('ERR_ALLOCATE_CODE');
+    if (String(code).includes('ERR_CODE_WRITE')) throw new Error(String(code));
+    throw e;
   }
+}
+
 
   async joinRoomByCode(input: JoinByCodeInput){
+    await this.fb.authReady;
     await this.waitAuth();
 
     const code = String(input.code).toUpperCase();
@@ -240,14 +229,14 @@ export class RoomClient {
     const now = Date.now();
     const assignedAvatar: Avatar | undefined = input.avatar ?? { kind:'preset', id: pickPresetId() };
     const player: Player = {
-      id: this.selfId,
+      id: this.guestId,
       name: String(input.name).slice(0,MAX_NAME_LEN),
-      role: room.hostId===this.selfId ? 'host':'player',
+      role: room.hostId===this.guestId ? 'host':'player',
       avatar: assignedAvatar,
       lastSeen: now
     };
 
-    await set(ref(this.fb.db, `rooms/${roomId}/players/${this.selfId}`), player);
+    await set(ref(this.fb.db, `rooms/${roomId}/players/${this.guestId}`), player);
 
     this.roomId = roomId; this.room = room;
     this.attachSubscriptions();
@@ -258,7 +247,7 @@ export class RoomClient {
   // ---------------------------------------------------------------------------
   // Chat + moderation
   private isSelfMuted(): boolean {
-    const self = this.players.find(p=>p.id===this.selfId);
+    const self = this.players.find(p=>p.id===this.guestId);
     if (!self) return false;
     const until = (self as any).mutedUntil ?? 0;
     return until > Date.now();
@@ -270,16 +259,16 @@ export class RoomClient {
 
     const modOptions = { slowModeMs: this.room?.options?.slowModeMs } as any;
     const res = await this.moderation.moderate({
-      roomId: this.roomId!, playerId: this.selfId, text, options: modOptions
+      roomId: this.roomId!, playerId: this.guestId, text, options: modOptions
     });
     if (!res.ok) { this.notifyModeration(res); return; }
 
     let clean = (res.text || '').slice(0, CHAT_MAX_LEN).trim();
     if (!clean) { this.notifyModeration({ ok:false, reason:'EMPTY' }); return; }
 
-    const name = this.players.find(p=>p.id===this.selfId)?.name ?? 'Guest';
+    const name = this.players.find(p=>p.id===this.guestId)?.name ?? 'Guest';
     const baseMsg: Omit<ChatMessage,'id'> = {
-      roomId: this.roomId!, playerId: this.selfId, name, createdAt: Date.now(), type: 'text', text: clean
+      roomId: this.roomId!, playerId: this.guestId, name, createdAt: Date.now(), type: 'text', text: clean
     };
 
     if (this.isSelfMuted()) {
@@ -298,34 +287,48 @@ export class RoomClient {
   // ---------------------------------------------------------------------------
   // Lobby polish APIs
 
-  /** Toggle ready for this player. true -> set; false -> remove */
-  async setReady(flag: boolean){
+  /** Toggle or set ready for this player. true => set, false => clear, undefined => toggle via transaction */
+  async setReady(flag?: boolean){
     await this.waitAuth();
     if(!this.roomId) throw new Error('Not in room');
-    const path = `rooms/${this.roomId}/ready/${this.selfId}`;
-    if (flag) await set(ref(this.fb.db, path), true);
-    else await set(ref(this.fb.db, path), null);
-  }
+    const nodeRef = ref(this.fb.db, `rooms/${this.roomId}/ready/${this.guestId}`);
 
-  /** Host-only: write status:starting and epochStart = now + seconds*1000 */
-  async hostStartCountdown(seconds = 3){
-    await this.waitAuth();
-    if(!this.roomId || !this.room) throw new Error('Not in room');
-    if (this.room.hostId !== this.selfId) throw new Error('ERR_NOT_HOST');
-
-    // must have >= 2 players
-    const present = this.players.filter(Boolean);
-    if (present.length < 2) throw new Error('ERR_TOO_FEW_PLAYERS');
-
-    // must be all ready
-    const allIds = new Set(present.map(p=>p.id));
-    for (const id of allIds) {
-      if (!this.readyIds.has(id)) throw new Error('ERR_NOT_ALL_READY');
+    if (typeof flag === 'boolean') {
+      if (flag) await set(nodeRef, true);
+      else await set(nodeRef, null as any);
+      return;
     }
 
-    const epochStart = Date.now() + Math.max(1, seconds)*1000;
-    await update(ref(this.fb.db, `rooms/${this.roomId}/meta`), { status: 'starting', epochStart });
+    // toggle atomically (prevents “press-down/press-up” flakiness)
+    await runTransaction(nodeRef, (cur) => (cur ? null : true));
   }
+
+/** Host-only: write status:starting and epochStart = now + seconds*1000 */
+async hostStartCountdown(seconds = 3){
+  await this.waitAuth();
+  if(!this.roomId || !this.room) throw new Error('Not in room');
+  if (this.room.hostId !== this.guestId) throw new Error('ERR_NOT_HOST');
+
+  // must have >= 2 players
+  const present = this.players.filter(Boolean);
+  if (present.length < 2) throw new Error('ERR_TOO_FEW_PLAYERS');
+
+  // must be all ready
+  const allIds = new Set(present.map(p=>p.id));
+  for (const id of allIds) {
+    if (!this.readyIds.has(id)) throw new Error('ERR_NOT_ALL_READY');
+  }
+
+  const epochStart = Date.now() + Math.max(1, seconds)*1000;
+
+  // ✅ write children individually (matches child rules)
+  const base = `rooms/${this.roomId}/meta`;
+  await Promise.all([
+    set(ref(this.fb.db, `${base}/status`), 'starting'),
+    set(ref(this.fb.db, `${base}/epochStart`), epochStart)
+  ]);
+}
+
 
   /** Lightweight emoji burst. Rate-limited to 1 / 2s locally. */
   async sendReaction(type: ReactionType){
@@ -337,7 +340,7 @@ export class RoomClient {
     if (now - this.lastReactionAt < 2000) return; // local throttle
     this.lastReactionAt = now;
 
-    const payload = { playerId: this.selfId, type, createdAt: now };
+    const payload = { playerId: this.guestId, type, createdAt: now };
     await set(push(ref(this.fb.db, `rooms/${this.roomId}/reactions`)), payload);
   }
 
@@ -347,8 +350,8 @@ export class RoomClient {
     if (!this.roomId) return;
     try { await this.discPlayer?.cancel(); } catch {}
     try { await this.discPresence?.cancel(); } catch {}
-    try { if (this.presenceRef) await set(this.presenceRef, null); } catch {}
-    try { if (this.playerRef) await set(this.playerRef, null); } catch {}
+    try { if (this.presenceRef) await set(this.presenceRef, null as any); } catch {}
+    try { if (this.playerRef) await set(this.playerRef, null as any); } catch {}
 
     this.unsubFns.forEach(f=>f()); this.unsubFns = [];
     if (this.heart) clearInterval(this.heart);

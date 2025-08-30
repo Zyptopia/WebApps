@@ -15,9 +15,8 @@ const REACTION_EMOJI: Record<'wave'|'clap'|'laugh'|'wow'|'nope', string> = {
 
 const AVATAR_SIZE = 48;
 const GAP_AFTER_AVATAR = 16;
-const REACTION_SLOT_W = 36; // reserved space between avatar and name
+const REACTION_SLOT_W = 36;
 
-// styles
 const avatarBtnStyle: React.CSSProperties = {
   width: AVATAR_SIZE, height: AVATAR_SIZE, padding: 0, border: 'none',
   background: 'transparent', display: 'grid', placeItems: 'center',
@@ -41,13 +40,11 @@ const iconBtn: React.CSSProperties = {
 
 export default function App() {
   const client = useRoomClient();
-  const selfId = useMemo(() => localStorage.getItem('guestId') || '', []);
+  const selfId = client.currentSelfId?.() ?? (localStorage.getItem('guestId') || '');
 
-  // avatar picker
   const presetIds = getPresetIds();
   const [avatar, setAvatar] = useState<Avatar>({ kind: 'preset', id: presetIds[0] });
 
-  // lobby state
   const [view, setView] = useState<'home' | 'lobby'>('home');
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
@@ -57,18 +54,13 @@ export default function App() {
   const [chatText, setChatText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // moderation UI
   const [warn, setWarn] = useState<string | null>(null);
   const [cooldownMs, setCooldownMs] = useState(0);
 
-  // ready + countdown
   const [readyIds, setReadyIds] = useState<string[]>([]);
   const [countdownMs, setCountdownMs] = useState(0);
-
-  // reactions (per-player, ~1.5s)
   const [activeReactions, setActiveReactions] = useState<Record<string, { type: keyof typeof REACTION_EMOJI; key: string }>>({});
 
-  // lobby message
   const [lobbyMsg, setLobbyMsg] = useState<string | null>(null);
   const showLobbyMsg = (m: string) => { setLobbyMsg(m); window.setTimeout(() => setLobbyMsg(null), 3000); };
 
@@ -113,14 +105,12 @@ export default function App() {
     });
   }, [client]);
 
-  // cooldown ticker
   useEffect(() => {
     if (cooldownMs <= 0) return;
     const id = setInterval(() => setCooldownMs(ms => Math.max(0, ms - 200)), 200);
     return () => clearInterval(id);
   }, [cooldownMs]);
 
-  // countdown ticker
   useEffect(() => {
     if (!room?.epochStart || room?.status !== 'starting') { setCountdownMs(0); return; }
     const tick = () => setCountdownMs(Math.max(0, room.epochStart - Date.now()));
@@ -130,21 +120,20 @@ export default function App() {
 
   // actions
   const createRoom = async () => {
-  const nickname = name.trim().slice(0, MAX_NAME) || 'Guest';
-  try {
-    await client.createRoom({ slug: 'typing-race', version: '0.1.0', name: nickname, avatar });
-    setView('lobby');
-    setError(null);
-  } catch (e:any) {
-    const msg = String(e?.message || e);
-    console.error('createRoom failed:', e);
-    if (msg.includes('ERR_PERMISSION_DENIED')) setError('Permission denied by database rules. Check Anonymous Auth + rules.');
-    else if (msg.includes('ERR_ALLOCATE_CODE')) setError('Could not allocate a join code. Try again.');
-    else if (msg.includes('ERR_CODE_WRITE')) setError('Could not reserve join code — rules forbid writes to /codes.');
-    else setError('Could not create room. Please try again.');
-  }
-};
-
+    const nickname = name.trim().slice(0, MAX_NAME) || 'Guest';
+    try {
+      await client.createRoom({ slug: 'typing-race', version: '0.1.0', name: nickname, avatar });
+      setView('lobby');
+      setError(null);
+    } catch (e:any) {
+      const msg = String(e?.message || e);
+      console.error('createRoom failed:', e);
+      if (msg.includes('ERR_PERMISSION_DENIED')) setError('Permission denied by database rules. Check Anonymous Auth + rules.');
+      else if (msg.includes('ERR_ALLOCATE_CODE')) setError('Could not allocate a join code. Try again.');
+      else if (msg.includes('ERR_CODE_WRITE')) setError('Could not reserve join code — rules forbid writes to /codes.');
+      else setError('Could not create room. Please try again.');
+    }
+  };
 
   const joinRoom = async () => {
     const nickname = name.trim().slice(0, MAX_NAME) || 'Guest';
@@ -172,35 +161,32 @@ export default function App() {
 
   const canSend = cooldownMs <= 0 && chatText.trim().length > 0;
 
-  // ready helpers
-  const isSelfReady = readyIds.includes(selfId);
-  const isHost = room?.hostId === selfId;
+  const isReadySelf = selfId ? readyIds.includes(selfId) : false;
+  const isHost = client.currentIsHost?.() ?? (room?.hostId === selfId);
   const everyoneReady = players.length >= 2 && readyIds.length >= 2 && readyIds.length === players.length;
 
   const toggleReady = async () => {
-    try { await client.setReady(!isSelfReady); }
-    catch (e: any) {
-      const msg = String(e?.message || e);
-      if (/PERMISSION|insufficient/i.test(msg)) showLobbyMsg('Ready is blocked by database rules.');
-      else showLobbyMsg('Could not update Ready — check your connection.');
-      console.warn('setReady failed:', msg);
-    }
+    try { await client.setReady(); } // transaction toggle (sticky)
+    catch { setError('Could not update Ready — check your connection.'); }
   };
 
   const startCountdown = async () => {
     if (!isHost) { showLobbyMsg('Only the host can start the game.'); return; }
     if (players.length < 2) { showLobbyMsg('Need at least 2 players to start.'); return; }
     if (!everyoneReady) { showLobbyMsg('Everyone must be Ready before starting.'); return; }
-    try { await client.hostStartCountdown(3000); }
-    catch (e: any) {
+    try {
+      await client.hostStartCountdown(3); // seconds
+    } catch (e:any) {
       const msg = String(e?.message || e);
-      if (/PERMISSION|insufficient/i.test(msg)) showLobbyMsg('Start is blocked by database rules.');
+      if (/ERR_NOT_HOST/.test(msg)) showLobbyMsg('Only the host can start the game.');
+      else if (/ERR_NOT_ALL_READY/.test(msg)) showLobbyMsg('Everyone needs to be ready first.');
+      else if (/ERR_TOO_FEW_PLAYERS/.test(msg)) showLobbyMsg('At least two players are required to start.');
+      else if (/PERMISSION|insufficient/i.test(msg)) showLobbyMsg('Start is blocked by database rules.');
       else showLobbyMsg('Could not start — check your connection.');
       console.warn('hostStartCountdown failed:', msg);
     }
   };
 
-  // share
   const shareCode = async () => {
     const joinCode = room?.joinCode || '';
     const link = `${location.origin}/join/${joinCode}`;
@@ -211,7 +197,6 @@ export default function App() {
     } catch {}
   };
 
-  // reactions
   const sendReaction = async (type: keyof typeof REACTION_EMOJI) => {
     const key = `${selfId}-${Date.now()}`;
     setActiveReactions(prev => ({ ...prev, [selfId]: { type, key } }));
@@ -259,47 +244,45 @@ export default function App() {
             <div>
               <h3>Avatar</h3>
 
-{/* Avatar chooser: portrait + actions + presets */}
-<div style={{ display:'grid', gridTemplateColumns:'112px 1fr', gap: 12 }}>
-  {/* Large portrait */}
-  <div style={{
-    width:112, height:112, borderRadius:16, background:'#0b1220',
-    display:'grid', placeItems:'center'
-  }}>
-    {renderAvatar(avatar, 96)}
-  </div>
+              <div style={{ display:'grid', gridTemplateColumns:'112px 1fr', gap: 12 }}>
+                <div style={{
+                  width:112, height:112, borderRadius:16, background:'#0b1220',
+                  display:'grid', placeItems:'center'
+                }}>
+                  {renderAvatar(avatar, 96)}
+                </div>
 
-  {/* Actions + presets */}
-  <div>
-    <div className="row" style={{ gap: 8, marginBottom: 8, alignItems:'center' }}>
-      <Button type="button" onClick={() => (document.getElementById('doodle-editor-dialog') as HTMLDialogElement | null)?.showModal()}>
-        Design your avatar
-      </Button>
-      <span className="small" style={{ opacity: .8 }}>or pick a preset</span>
-    </div>
+                <div>
+                  <div className="row" style={{ gap: 8, marginBottom: 8, alignItems:'center' }}>
+                    <Button
+                      type="button"
+                      onClick={() => (document.getElementById('doodle-editor-dialog') as HTMLDialogElement | null)?.showModal()}
+                    >
+                      Design your avatar
+                    </Button>
+                    <span className="small" style={{ opacity: .8 }}>or pick a preset</span>
+                  </div>
 
-    <div className="grid">
-      {presetIds.map((id) => {
-        const selected = avatar?.kind === 'preset' && avatar.id === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setAvatar({ kind: 'preset', id })}
-            className={`avatar-option ${selected ? 'selected' : ''}`}
-            aria-label={`Preset ${id}`}
-          >
-            <div className="avatar">{renderAvatar({ kind: 'preset', id }, 48)}</div>
-          </button>
-        );
-      })}
-    </div>
-  </div>
-</div>
+                  <div className="grid">
+                    {presetIds.map((id) => {
+                      const selected = avatar?.kind === 'preset' && (avatar as any).id === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setAvatar({ kind: 'preset', id } as any)}
+                          className={`avatar-option ${selected ? 'selected' : ''}`}
+                          aria-label={`Preset ${id}`}
+                        >
+                          <div className="avatar">{renderAvatar({ kind: 'preset', id } as any, AVATAR_SIZE)}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
 
-{/* Keep the editor mounted; Save auto-closes the dialog */}
-<AvatarEditor value={avatar} onChange={(a) => { setAvatar(a); }} />
-
+              <AvatarEditor value={avatar} onChange={(a) => { setAvatar(a); }} />
             </div>
           </div>
         </div>
@@ -328,8 +311,15 @@ export default function App() {
             <h3 style={{ margin: 0 }}>Players</h3>
             <div className="small" aria-live="polite">Ready {readyIds.length}/{players.length}</div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-              <Button type="button" onClick={toggleReady}>{isSelfReady ? 'Unready' : 'Ready'}</Button>
-              <Button type="button" onClick={startCountdown} title="Host: start countdown">Start in 3s</Button>
+              <Button type="button" onClick={toggleReady}>{isReadySelf ? 'Unready' : 'Ready'}</Button>
+              <Button
+                type="button"
+                onClick={startCountdown}
+                title="Host: start countdown"
+                disabled={room?.status === 'starting'}
+              >
+                {room?.status === 'starting' ? 'Starting…' : 'Start in 3s'}
+              </Button>
             </div>
           </div>
 
@@ -345,12 +335,10 @@ export default function App() {
                     {renderAvatar(p.avatar, AVATAR_SIZE)}
                   </button>
 
-                  {/* Reaction slot (no overlap) */}
                   <div style={reactionSlotStyle}>
                     {active && <div style={reactionChipStyle} aria-hidden>{REACTION_EMOJI[active.type]}</div>}
                   </div>
 
-                  {/* Name & status */}
                   <div>
                     <div>
                       {p.name} <span className="small">({p.role})</span>
@@ -363,13 +351,12 @@ export default function App() {
             })}
           </div>
 
-          {/* Quick reactions bar */}
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
-            <Button type="button" onClick={() => sendReaction('wave')} style={iconBtn} title="Wave">{REACTION_EMOJI.wave}</Button>
-            <Button type="button" onClick={() => sendReaction('clap')} style={iconBtn} title="Clap">{REACTION_EMOJI.clap}</Button>
-            <Button type="button" onClick={() => sendReaction('laugh')} style={iconBtn} title="Laugh">{REACTION_EMOJI.laugh}</Button>
-            <Button type="button" onClick={() => sendReaction('wow')} style={iconBtn} title="Wow">{REACTION_EMOJI.wow}</Button>
-            <Button type="button" onClick={() => sendReaction('nope')} style={iconBtn} title="Nope">{REACTION_EMOJI.nope}</Button>
+            <Button type="button" onClick={() => sendReaction('wave')} style={iconBtn} title="Wave">👋</Button>
+            <Button type="button" onClick={() => sendReaction('clap')} style={iconBtn} title="Clap">👏</Button>
+            <Button type="button" onClick={() => sendReaction('laugh')} style={iconBtn} title="Laugh">😂</Button>
+            <Button type="button" onClick={() => sendReaction('wow')} style={iconBtn} title="Wow">😮</Button>
+            <Button type="button" onClick={() => sendReaction('nope')} style={iconBtn} title="Nope">🙅‍♂️</Button>
           </div>
 
           <hr />
