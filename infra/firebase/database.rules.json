@@ -18,20 +18,9 @@
             ".write": true,
             ".validate": "newData.isNumber()"
           },
-
           "options": {
-            "slowModeMs": {
-              ".write": true,
-              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000"
-            },
-            "allowLinks": {
-              ".write": true,
-              ".validate": "newData.isBoolean()"
-            },
-            "reactions": {
-              ".write": true,
-              ".validate": "newData.isBoolean()"
-            }
+            ".write": true,
+            ".validate": "(!newData.child('slowModeMs').exists() || (newData.child('slowModeMs').isNumber() && newData.child('slowModeMs').val() >= 0 && newData.child('slowModeMs').val() <= 60000)) && (!newData.child('reactionsEnabled').exists() || newData.child('reactionsEnabled').isBoolean()) && (!newData.child('spectators').exists() || newData.child('spectators').isBoolean())"
           }
         },
 
@@ -61,7 +50,7 @@
         "reactions": {
           "$eventId": {
             ".write": true,
-            ".validate": "newData.hasChildren(['playerId','type','createdAt']) && newData.child('playerId').isString() && newData.child('type').val().matches(/^(wave|clap|laugh|wow|nope)$/) && newData.child('createdAt').isNumber()"
+            ".validate": "!newData.exists() || (newData.hasChildren(['playerId','type','createdAt']) && newData.child('playerId').isString() && newData.child('type').val().matches(/^(wave|clap|laugh|wow|nope)$/) && newData.child('createdAt').isNumber())"
           }
         },
 
@@ -69,7 +58,7 @@
           ".read": true,
           "$msgId": {
             ".write": true,
-            ".validate": "newData.hasChildren(['roomId','playerId','name','createdAt','type']) && newData.child('roomId').val() == $roomId && newData.child('playerId').isString() && newData.child('name').isString() && newData.child('name').val().length <= 20 && newData.child('type').val().matches(/^(text|system|reaction|poll)$/) && (!newData.child('text').exists() || (newData.child('text').isString() && newData.child('text').val().length <= 160)) && newData.child('createdAt').isNumber()"
+            ".validate": "newData.hasChildren(['roomId','playerId','name','createdAt','type']) && newData.child('roomId').val() == $roomId && newData.child('name').isString() && newData.child('name').val().length <= 20 && newData.child('type').val().matches(/^(text|system|reaction|poll)$/) && (!newData.child('text').exists() || (newData.child('text').isString() && newData.child('text').val().length <= 160)) && newData.child('createdAt').isNumber()"
           }
         }
       }
