@@ -1,0 +1,33 @@
+# deps
+**/node_modules/
+.pnp.*
+.pnpm-store/
+**/.pnpm-debug.log
+
+# builds / caches
+**/dist/
+**/.vite/
+**/build/
+**/.turbo/
+**/.next/
+**/.cache/
+**/.parcel-cache/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# env
+**/.env
+**/.env.*.local
+
+# editor / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# firebase local stuff
+.firebase/

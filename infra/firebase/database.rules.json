@@ -1,0 +1,62 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": false,
+
+    "rooms": {
+      "$roomId": {
+        "meta": {
+          ".read": true,
+          ".write": "!data.exists()", 
+          ".validate": "newData.hasChildren(['id','slug','version','joinCode','private','maxPlayers','status','hostId','createdAt']) && newData.child('id').val() == $roomId && newData.child('joinCode').isString() && newData.child('joinCode').val().matches(/^[A-Z0-9]{4}$/) && newData.child('status').val().matches(/^(lobby|starting|inGame|ended)$/) && newData.child('maxPlayers').isNumber() && newData.child('createdAt').isNumber()"
+        },
+
+        "players": {
+          ".read": true,
+          "$playerId": {
+            ".write": "auth != null",
+            ".validate": "newData.hasChildren(['id','name','role','lastSeen']) && newData.child('id').val() == $playerId && newData.child('name').isString() && newData.child('name').val().length <= 20 && newData.child('role').val().matches(/^(host|player|spectator)$/) && newData.child('lastSeen').isNumber()"
+          }
+        },
+
+        "presence": {
+          ".read": true,
+          "$playerId": {
+            ".write": "auth != null",
+            ".validate": "newData.hasChildren(['lastSeen']) && newData.child('lastSeen').isNumber()"
+          }
+        },
+
+        "chat": {
+          ".read": true,
+          "$msgId": {
+            ".write": "auth != null",
+            ".validate": "newData.hasChildren(['roomId','playerId','name','createdAt','type']) && newData.child('roomId').val() == $roomId && newData.child('name').isString() && newData.child('name').val().length <= 20 && newData.child('type').val().matches(/^(text|system|reaction|poll)$/) && (!newData.child('text').exists() || (newData.child('text').isString() && newData.child('text').val().length <= 160)) && newData.child('createdAt').isNumber()"
+          }
+        },
+
+        "ready": {
+          "$playerId": {
+            ".write": "auth != null",
+            ".validate": "!newData.exists() || newData.val() === true"
+          }
+        },
+
+        "reactions": {
+          "$eventId": {
+            ".write": "auth != null",
+            ".validate": "newData.hasChildren(['playerId','type','createdAt']) && newData.child('playerId').isString() && newData.child('type').val().matches(/^(wave|clap|laugh|wow|nope)$/) && newData.child('createdAt').isNumber()"
+          }
+        }
+      }
+    },
+
+    "codes": {
+      ".read": true,
+      "$code": {
+        ".write": "!data.exists()",
+        ".validate": "newData.hasChildren(['roomId','createdAt']) && newData.child('roomId').isString() && newData.child('createdAt').isNumber() && $code.matches(/^[A-Z0-9]{4}$/)"
+      }
+    }
+  }
+}

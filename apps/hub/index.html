@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Creative Hub</title>
+    <!-- GH Pages SPA fallback: replay original path after 404 redirect -->
+    <script>
+      (() => {
+        try {
+          const p = sessionStorage.getItem('__spa_fallback_path__');
+          if (p) {
+            history.replaceState(null, '', p);
+            sessionStorage.removeItem('__spa_fallback_path__');
+          }
+        } catch {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
