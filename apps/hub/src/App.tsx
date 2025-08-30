@@ -133,6 +133,7 @@ export default function App() {
     const nickname = name.trim().slice(0, MAX_NAME) || 'Guest';
     try { await client.createRoom({ slug: 'typing-race', version: '0.1.0', name: nickname, avatar }); setView('lobby'); setError(null); }
     catch { setError('Could not create room. Please try again.'); }
+    
   };
 
   const joinRoom = async () => {

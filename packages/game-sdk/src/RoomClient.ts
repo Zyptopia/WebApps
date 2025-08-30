@@ -22,6 +22,8 @@ export class RoomClient {
   private fb: any;
   private guestId: string;
 
+  private async waitAuth() { try { await this.fb?.authReady?.(); } catch {} }
+
   public room: Room | null = null;
   public roomId: string | null = null;
 
@@ -105,7 +107,8 @@ export class RoomClient {
   }
 
   // --- Presence --------------------------------------------------------------
-  private startPresence(name: string, avatar?: Avatar | null){
+  private async startPresence(name: string, avatar?: Avatar | null){
+  await this.waitAuth();
     if(!this.roomId) return;
     const now = Date.now();
     const assignedAvatar: Avatar | undefined = avatar ?? { kind:'preset', id: pickPresetId() };
@@ -139,6 +142,7 @@ export class RoomClient {
   }
 
   async createRoom(input: CreateRoomInput){
+  await this.waitAuth();
     const roomRef = push(ref(this.fb.db, 'rooms')); const roomId = roomRef.key!;
     const joinCode = await this.allocateCode(roomId); const now = Date.now();
     const room: Room = { id: roomId, slug: input.slug, version: input.version, joinCode, private: !!input.private, maxPlayers: input.maxPlayers ?? MAX_PLAYERS_DEFAULT, status: 'lobby', hostId: this.guestId, createdAt: now, options: {} } as Room;
@@ -152,6 +156,7 @@ export class RoomClient {
   }
 
   async joinRoomByCode(input: JoinByCodeInput){
+  await this.waitAuth();
     const code = String(input.code).toUpperCase();
     const mapSnap = await get(ref(this.fb.db, `codes/${code}`));
     if(!mapSnap.exists()) throw new Error('ERR_CODE_NOT_FOUND');
@@ -174,6 +179,7 @@ export class RoomClient {
   }
 
   async sendText(text: string){
+  await this.waitAuth();
     if(!this.roomId) throw new Error('Not in room');
     const modOptions = { slowModeMs: this.room?.options?.slowModeMs } as any;
     const res = await this.moderation.moderate({ roomId: this.roomId!, playerId: this.guestId, text, options: modOptions });
