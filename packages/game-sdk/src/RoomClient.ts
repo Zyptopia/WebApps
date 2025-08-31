@@ -376,7 +376,7 @@ export class RoomClient {
     if (!this.roomId || !this.room) throw new Error('Not in room');
     if (this.room.hostId !== this.guestId) throw new Error('ERR_NOT_HOST');
     const until = Date.now() + Math.max(1, minutes) * 60_000;
-    await update(ref(this.fb.db, `rooms/${this.roomId}/players/${playerId}`), { mutedUntil: until });
+    await set(ref(this.fb.db, `rooms/${this.roomId}/players/${playerId}/mutedUntil`), until);
   }
 
   /** Host-only: remove shadow-mute */
@@ -384,7 +384,7 @@ export class RoomClient {
     await this.waitAuth();
     if (!this.roomId || !this.room) throw new Error('Not in room');
     if (this.room.hostId !== this.guestId) throw new Error('ERR_NOT_HOST');
-    await update(ref(this.fb.db, `rooms/${this.roomId}/players/${playerId}`), { mutedUntil: null as any });
+    await set(ref(this.fb.db, `rooms/${this.roomId}/players/${playerId}/mutedUntil`), null as any);
   }
 
   /** Lightweight emoji burst. Rate-limited to 1 / 2s locally. */

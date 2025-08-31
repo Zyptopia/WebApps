@@ -1,4 +1,9 @@
-// FILE: apps/hub/src/App.tsx
+// ================================
+// FILE: apps/hub/src/App.tsx (CLEANED)
+// Fixes: use SDK identity (client.selfId), gate host UI with amHost,
+// and DO NOT append main.tsx to this file.
+// ================================
+
 import React, { useEffect, useMemo, useState } from 'react';
 import { RoomClient, type Avatar } from '@sdk/game-sdk';
 import { firebaseConfig } from './firebase-config';
@@ -42,7 +47,9 @@ const iconBtn: React.CSSProperties = {
 
 export default function App() {
   const client = useRoomClient();
-  const selfId = useMemo(() => localStorage.getItem('guestId') || '', []);
+
+  // expose for console debugging
+  useEffect(() => { (window as any).rc = client; }, [client]);
 
   // avatar picker
   const presetIds = getPresetIds();
@@ -79,16 +86,16 @@ export default function App() {
 
   // listeners
   useEffect(() => client.onPlayers(setPlayers), [client]);
-  useEffect(() => client.onRoomMeta((r) => {
+  useEffect(() => client.onRoomMeta((r: any) => {
     setRoom(r);
     // keep local drafts in sync when room changes
     const delay = (r as any)?.options?.chatDelayMs ?? (r as any)?.options?.slowModeMs ?? 0;
     setChatDelayMsDraft(delay);
   }), [client]);
   useEffect(() => client.onChat(setChat), [client]);
-  useEffect(() => client.onReady((s) => setReadyIds(Array.from(s))), [client]);
+  useEffect(() => client.onReady((s: Set<string>) => setReadyIds(Array.from(s))), [client]);
   useEffect(() => {
-    return client.onReactions((events) => {
+    return client.onReactions((events: Array<{ playerId: string; type: keyof typeof REACTION_EMOJI; createdAt: number }>) => {
       const latestPerPlayer: Record<string, { type: keyof typeof REACTION_EMOJI; at: number }> = {};
       for (const ev of events) {
         const cur = latestPerPlayer[ev.playerId];
@@ -109,7 +116,7 @@ export default function App() {
 
   // moderation events
   useEffect(() => {
-    return client.onModeration((res) => {
+    return client.onModeration((res: any) => {
       if (!res.ok) {
         if (res.reason === 'TOO_LONG') setWarn('Message too long (max 160).');
         else if (res.reason === 'DUPLICATE') setWarn('Duplicate message (15s).');
@@ -137,6 +144,51 @@ export default function App() {
     tick(); const id = setInterval(tick, 100);
     return () => clearInterval(id);
   }, [room?.epochStart, room?.status]);
+
+  // Deep link: /join/:code prefill + auto-join (supports base path, hash, and ?code)
+  useEffect(() => {
+    const tryDeepLink = async () => {
+      try {
+        const getCode = (): string => {
+          const up = (s: string) => s.toUpperCase();
+          // 1) Pathname: look for "/join/:code" anywhere in the path
+          const segs = location.pathname.split('/').filter(Boolean);
+          const j1 = segs.map(s=>s.toLowerCase()).lastIndexOf('join');
+          if (j1 !== -1 && segs[j1+1]) return up(segs[j1+1].slice(0,4));
+          // 2) Hash-based: "#/join/:code" or "#join/:code"
+          const h = location.hash.replace(/^#/, '');
+          const hsegs = h.split('/').filter(Boolean);
+          const j2 = hsegs.map(s=>s.toLowerCase()).lastIndexOf('join');
+          if (j2 !== -1 && hsegs[j2+1]) return up(hsegs[j2+1].slice(0,4));
+          // 3) Query: ?code=ABCD
+          const sp = new URLSearchParams(location.search);
+          const q = sp.get('code');
+          if (q) return up(q.slice(0,4));
+          return '';
+        };
+
+        const codeFromLink = getCode();
+        if (codeFromLink && /^[A-Z0-9]{4}$/.test(codeFromLink)) {
+          setCode(codeFromLink);
+          const nickname = 'Guest';
+          try {
+            await client.joinRoomByCode({ code: codeFromLink, name: nickname, avatar });
+            setView('lobby'); setError(null);
+          } catch (e:any) {
+            const msg = String(e?.message || e);
+            if (msg.includes('ERR_CODE_NOT_FOUND')) setError('Code not found. Check the 4-letter code and try again.');
+            else if (msg.toLowerCase().includes('room not found')) setError('This room no longer exists.');
+            else setError('Could not join from link. You can paste the code manually.');
+          }
+        }
+      } catch {}
+    };
+    tryDeepLink();
+  }, [client]);
+
+  // Stable identity
+  const selfId = client.selfId;
+  const amHost = !!(room && room.hostId === selfId);
 
   // actions
   const createRoom = async () => {
@@ -183,7 +235,6 @@ export default function App() {
 
   // ready helpers
   const isSelfReady = readyIds.includes(selfId);
-  const isHost = room?.hostId === selfId;
   const everyoneReady = players.length >= 2 && readyIds.length >= 2 && readyIds.length === players.length;
 
   const toggleReady = async () => {
@@ -195,7 +246,7 @@ export default function App() {
   };
 
   const startCountdown = async () => {
-    if (!isHost) { showLobbyMsg('Only the host can start the game.'); return; }
+    if (!amHost) { showLobbyMsg('Only the host can start the game.'); return; }
     if (players.length < 2) { showLobbyMsg('Need at least 2 players to start.'); return; }
     if (!everyoneReady) { showLobbyMsg('Everyone must be Ready before starting.'); return; }
     try { await client.hostStartCountdown(3); }
@@ -211,7 +262,9 @@ export default function App() {
   // share
   const shareCode = async () => {
     const joinCode = room?.joinCode || '';
-    const link = `${location.origin}/join/${joinCode}`;
+    const base = (import.meta as any).env?.BASE_URL ?? '/';
+    const joinPath = `${base.replace(/\/?$/, '/') }join/${joinCode}`; // ensures trailing '/'
+    const link = `${location.origin}${joinPath}`;
     const text = `Join my room (${joinCode}) — ${link}`;
     try {
       if ((navigator as any).share) await (navigator as any).share({ title: 'Creative Hub', text, url: link });
@@ -360,7 +413,7 @@ export default function App() {
                 {renderCountdown()}
               </div>
               <Button type="button" onClick={shareCode} title="Copy/share Join link">Share code</Button>
-              {room?.hostId === selfId && (
+              {amHost && (
                 <Button type="button" className="secondary" onClick={openSettings} title="Room settings">
                   Settings
                 </Button>
@@ -410,7 +463,7 @@ export default function App() {
                     </div>
 
                     {/* Host actions per player */}
-                    {room?.hostId === selfId && p.id !== selfId && (
+                    {amHost && p.id !== selfId && (
                       <div className="row" style={{ gap:6 }}>
                         {!isMuted
                           ? <Button type="button" className="secondary" onClick={() => mutePlayer(p.id)}>Mute</Button>
@@ -477,7 +530,7 @@ export default function App() {
       >
         <form method="dialog" style={{ margin:0 }}>
           <h3 style={{ marginTop: 0 }}>Room Settings</h3>
-          {room?.hostId !== selfId && <div className="small" style={{ marginBottom: 8, opacity:0.8 }}>Only the host can change settings.</div>}
+          {!amHost && <div className="small" style={{ marginBottom: 8, opacity:0.8 }}>Only the host can change settings.</div>}
 
           <div className="field">
             <label>Chat delay</label>
@@ -492,7 +545,7 @@ export default function App() {
                 step={250}
                 value={chatDelayMsDraft}
                 onChange={(e) => setChatDelayMsDraft(Number(e.target.value))}
-                disabled={room?.hostId !== selfId}
+                disabled={!amHost}
               />
               <div className="small" style={{ minWidth:72, textAlign:'right' }}>
                 {(chatDelayMsDraft/1000).toFixed(2)}s
@@ -502,7 +555,7 @@ export default function App() {
 
           <div className="row" style={{ marginTop: 16, justifyContent:'flex-end', gap:8 }}>
             <Button type="button" className="secondary" onClick={closeSettings}>Close</Button>
-            <Button type="button" onClick={saveSettings} disabled={room?.hostId !== selfId}>Save</Button>
+            <Button type="button" onClick={saveSettings} disabled={!amHost}>Save</Button>
           </div>
         </form>
       </dialog>

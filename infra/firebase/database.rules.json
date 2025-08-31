@@ -28,7 +28,11 @@
           ".read": true,
           "$playerId": {
             ".write": "(auth == null || auth.uid == $playerId) || !root.child('rooms/'+$roomId+'/meta').exists()",
-            ".validate": "newData.hasChildren(['id','name','role','lastSeen']) && newData.child('id').val() == $playerId && newData.child('name').isString() && newData.child('name').val().length <= 20 && newData.child('role').val().matches(/^(host|player|spectator)$/) && newData.child('lastSeen').isNumber() && (!newData.child('mutedUntil').exists() || newData.child('mutedUntil').isNumber())"
+            ".validate": "newData.hasChildren(['id','name','role','lastSeen']) && newData.child('id').val() == $playerId && newData.child('name').isString() && newData.child('name').val().length <= 20 && newData.child('role').val().matches(/^(host|player|spectator)$/) && newData.child('lastSeen').isNumber() && (!newData.child('mutedUntil').exists() || newData.child('mutedUntil').isNumber())",
+            "mutedUntil": {
+              ".write": "(auth != null && auth.uid == root.child('rooms/'+$roomId+'/meta/hostId').val()) || (auth != null && auth.uid == $playerId) || !root.child('rooms/'+$roomId+'/meta').exists()",
+              ".validate": "!newData.exists() || newData.isNumber()"
+            }
           }
         },
 
