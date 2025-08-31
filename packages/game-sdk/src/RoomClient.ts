@@ -93,6 +93,12 @@ export class RoomClient {
     this.guestId = (this.fb?.auth?.currentUser?.uid) || ensureGuestId();
   }
 
+  /** Public stable identifier for the current client (auth.uid once ready). */
+  public get selfId(){ return this.guestId; }
+
+  /** Convenience: true iff this client is host for the current room. */
+  public get isHost(){ return !!(this.room && this.room.hostId === this.guestId); }
+
   // ---------------------------------------------------------------------------
   // Subscriptions
   onPlayers(cb: (players: Player[]) => void){ this.playersListeners.push(cb); if(this.players.length) cb(this.players); return ()=>{ this.playersListeners = this.playersListeners.filter(f=>f!==cb) } }
