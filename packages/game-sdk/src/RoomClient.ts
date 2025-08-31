@@ -89,7 +89,8 @@ export class RoomClient {
 
   constructor(opts: { firebaseConfig: Record<string, any> }) {
     this.fb = initFirebase(opts.firebaseConfig, { anonymousAuth: true });
-    this.guestId = ensureGuestId();
+    // Prefer authenticated UID if already present; fallback to local install ID.
+    this.guestId = (this.fb?.auth?.currentUser?.uid) || ensureGuestId();
   }
 
   // ---------------------------------------------------------------------------
@@ -109,7 +110,20 @@ export class RoomClient {
   private notifyReady(){ const snapshot = new Set(this.readyIds); this.readyListeners.forEach(cb=>cb(snapshot)); }
   private notifyReactions(){ const copy = this.reactions.slice(); this.reactionListeners.forEach(cb=>cb(copy)); }
 
-  private async waitAuth(){ try { await this.fb?.authReady?.(); } catch {} }
+  private async waitAuth(){
+    try {
+      const ar = this.fb?.authReady;
+      if (typeof ar === 'function') {
+        await ar();
+      } else if (ar && typeof ar.then === 'function') {
+        await ar;
+      }
+    } finally {
+      // After auth is ready, ensure writes use auth.uid to satisfy rules ($playerId == auth.uid)
+      const uid = this.fb?.auth?.currentUser?.uid;
+      if (uid && this.guestId !== uid) this.guestId = uid;
+    }
+  }
 
   private attachSubscriptions(){
     if(this.subscribed || !this.roomId) return;
@@ -180,7 +194,7 @@ export class RoomClient {
   // Room lifecycle
   private async allocateCode(roomId: string): Promise<string>{
     for(let i=0;i<32;i++){
-      const code = randomCode();
+      const code = randomCode().toUpperCase(); // ensure uppercase for rule validator
       const codeRef = ref(this.fb.db, `codes/${code}`);
       try {
         const res = await runTransaction(codeRef, (cur)=> cur ? cur : { roomId, createdAt: Date.now() });
@@ -230,7 +244,10 @@ export class RoomClient {
   async joinRoomByCode(input: JoinByCodeInput){
     await this.fb.authReady; await this.waitAuth();
 
-    const code = String(input.code).toUpperCase();
+    const code = String(input.code).toUpperCase().trim();
+    // IMPORTANT: this must match your security rules and JOIN_CODE_LEN. If your rules use 4, keep this at 4.
+    if (!/^[A-Z0-9]{4}$/.test(code)) throw new Error('ERR_CODE_INVALID');
+
     const mapSnap = await get(ref(this.fb.db, `codes/${code}`));
     if(!mapSnap.exists()) throw new Error('ERR_CODE_NOT_FOUND');
 
@@ -334,6 +351,14 @@ export class RoomClient {
     }
     if (Object.prototype.hasOwnProperty.call(partial, 'reactionsEnabled')) patch.reactionsEnabled = !!partial.reactionsEnabled;
     if (Object.prototype.hasOwnProperty.call(partial, 'spectators')) patch.spectators = !!partial.spectators;
+
+    // Ensure chatDelayMs is always present to satisfy rules validation on /meta/options
+    if (!Object.prototype.hasOwnProperty.call(patch, 'chatDelayMs')) {
+      let current = Number((this.room as any)?.options?.chatDelayMs ?? (this.room as any)?.options?.slowModeMs ?? 0);
+      if (!Number.isFinite(current) || current < 0) current = 0;
+      current = Math.min(60_000, Math.round(current));
+      patch.chatDelayMs = current;
+    }
 
     if (Object.keys(patch).length === 0) return;
     await update(ref(this.fb.db, `rooms/${this.roomId}/meta/options`), patch);
