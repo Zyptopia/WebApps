@@ -9,6 +9,6 @@ export default defineConfig(({ mode }) => {
     base,
     plugins: [react(), tsconfigPaths()],
     resolve: { dedupe: ['react', 'react-dom', 'react/jsx-runtime'] },
-    optimizeDeps: { include: ['react', 'react-dom', 'react/jsx-runtime', 'scheduler'] }
+    optimizeDeps: { include: ['react', 'react-dom', 'react/jsx-runtime', 'scheduler'] },
   };
 });

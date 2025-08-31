@@ -18,7 +18,13 @@ interface ClientCtxValue {
 
 const ClientCtx = createContext<ClientCtxValue | null>(null);
 
-export function ClientProvider({ firebaseConfig, children }: { firebaseConfig: FirebaseConfig; children: React.ReactNode }) {
+export function ClientProvider({
+  firebaseConfig,
+  children,
+}: {
+  firebaseConfig: FirebaseConfig;
+  children: React.ReactNode;
+}) {
   const client = useMemo(() => new RoomClient({ firebaseConfig }), [firebaseConfig]);
 
   const [room, setRoom] = useState<any | null>(null);
@@ -30,7 +36,11 @@ export function ClientProvider({ firebaseConfig, children }: { firebaseConfig: F
     const offRoom = client.onRoomMeta((r: any) => setRoom(r));
     const offPlayers = client.onPlayers((p: any[]) => setPlayers(p));
     const offReady = client.onReady((ids: Set<string>) => setReadyIds(new Set(ids)));
-    return () => { offRoom(); offPlayers(); offReady(); };
+    return () => {
+      offRoom();
+      offPlayers();
+      offReady();
+    };
   }, [client]);
 
   const amHost = !!(room && room.hostId === client.selfId);
@@ -38,7 +48,7 @@ export function ClientProvider({ firebaseConfig, children }: { firebaseConfig: F
   return <ClientCtx.Provider value={value}>{children}</ClientCtx.Provider>;
 }
 
-export function useClient(){
+export function useClient() {
   const ctx = useContext(ClientCtx);
   if (!ctx) throw new Error('useClient must be used within <ClientProvider>');
   return ctx;

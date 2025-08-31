@@ -4,16 +4,23 @@ import { renderAvatar } from './renderAvatar';
 
 export function AvatarEditorStub({
   value,
-  onChange
-}: { value: Avatar | null | undefined, onChange: (a: Avatar) => void }) {
+  onChange,
+}: {
+  value: Avatar | null | undefined;
+  onChange: (a: Avatar) => void;
+}) {
   const [seed] = useState(Math.random());
   const ref = useRef<HTMLCanvasElement>(null);
-  const palette = useMemo(() => ['#000000', '#ffffff', '#f43f5e', '#22c55e', '#3b82f6', '#eab308', '#a78bfa'], []);
+  const palette = useMemo(
+    () => ['#000000', '#ffffff', '#f43f5e', '#22c55e', '#3b82f6', '#eab308', '#a78bfa'],
+    []
+  );
 
   const makeDoodle = (): Avatar => {
     const canvas = ref.current!;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = '#0b0e14';
+    ctx.fillRect(0, 0, 64, 64);
     ctx.fillStyle = palette[Math.floor(seed * palette.length)];
     ctx.fillRect(8, 8, 48, 48);
     return { kind: 'doodle', meta: { w: 64, h: 64, palette }, rle: 'stub' };

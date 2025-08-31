@@ -37,6 +37,6 @@ export function rleDecode(bytes: Uint8Array): Uint8Array {
 
 // size guard helper
 export function base64Bytes(b64: string): number {
-  const pad = (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
-  return ((b64.length * 3) / 4) - pad;
+  const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return (b64.length * 3) / 4 - pad;
 }

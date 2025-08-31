@@ -19,10 +19,10 @@ export interface ModerateInput {
 export interface ModerateResult {
   ok: boolean;
   reason: ModerationReason;
-  text?: string;           // cleaned text when ok
+  text?: string; // cleaned text when ok
   cooldownMsLeft?: number; // when blocked by slow mode
-  replaced?: boolean;      // if any masking/scrubbing occurred
-  original?: string;       // original text when replaced
+  replaced?: boolean; // if any masking/scrubbing occurred
+  original?: string; // original text when replaced
 }
 
 const DUPLICATE_WINDOW_MS = 15_000; // 15s
@@ -32,7 +32,7 @@ const DEFAULT_BAD_WORDS: string[] = [
   // Tiny starter list; you can extend at runtime via extendBadWords([...])
   'bad',
   'worse',
-  'awful'
+  'awful',
 ];
 
 function collapseWhitespace(s: string) {
@@ -48,7 +48,7 @@ function maskWord(word: string): string {
 
 function buildBadWordRegex(words: string[]): RegExp | null {
   if (!words.length) return null;
-  const escaped = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const pat = `\\b(${escaped.join('|')})\\b`;
   return new RegExp(pat, 'gi');
 }
@@ -62,7 +62,9 @@ export class ModerationEngine {
 
   constructor(opts: { chatMaxLen: number; badWords?: string[] }) {
     this.chatMaxLen = opts.chatMaxLen;
-    const list = (opts.badWords && opts.badWords.length ? opts.badWords : DEFAULT_BAD_WORDS).map(w => w.toLowerCase());
+    const list = (opts.badWords && opts.badWords.length ? opts.badWords : DEFAULT_BAD_WORDS).map(
+      (w) => w.toLowerCase()
+    );
     this.badWords = new Set(list);
     this.badWordRe = buildBadWordRegex([...this.badWords]);
   }
@@ -83,7 +85,7 @@ export class ModerationEngine {
     // Duplicate detection (normalized, case-insensitive)
     const norm = text.toLowerCase();
     const last = this.lastText.get(playerId);
-    if (last && last.textNorm === norm && (now - last.at) < DUPLICATE_WINDOW_MS) {
+    if (last && last.textNorm === norm && now - last.at < DUPLICATE_WINDOW_MS) {
       return { ok: false, reason: 'DUPLICATE' };
     }
 
@@ -108,8 +110,14 @@ export class ModerationEngine {
 
     // URL scrub (strip links when allowLinks !== true)
     if (!input.options?.allowLinks) {
-      const newText = text.replace(LINK_RE, '').replace(/\s{2,}/g, ' ').trim();
-      if (newText !== text) { text = newText; replaced = true; }
+      const newText = text
+        .replace(LINK_RE, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (newText !== text) {
+        text = newText;
+        replaced = true;
+      }
       if (!text) return { ok: false, reason: 'EMPTY' };
     }
 

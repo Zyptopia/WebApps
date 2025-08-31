@@ -42,7 +42,7 @@ export const presets: Record<string, string> = {
         <rect rx="12" width="64" height="64" fill="#0f172a"/>
         <path d="M8 48h48" stroke="#60a5fa" stroke-width="6" stroke-linecap="round"/>
         <circle cx="20" cy="28" r="4" fill="#60a5fa"/><circle cx="32" cy="28" r="4" fill="#60a5fa"/><circle cx="44" cy="28" r="4" fill="#60a5fa"/>
-      </svg>`
+      </svg>`,
 };
 
 // Public API used by the app

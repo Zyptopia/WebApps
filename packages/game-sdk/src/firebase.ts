@@ -1,11 +1,23 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import {
-  getDatabase, ref, onValue, push, set, update, onDisconnect, get, runTransaction,
-  type Database
+  getDatabase,
+  ref,
+  onValue,
+  push,
+  set,
+  update,
+  onDisconnect,
+  get,
+  runTransaction,
+  type Database,
 } from 'firebase/database';
 import {
-  getAuth, signInAnonymously, onAuthStateChanged,
-  setPersistence, browserLocalPersistence, type Auth
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
+  type Auth,
 } from 'firebase/auth';
 
 type InitOpts = { anonymousAuth?: boolean };
